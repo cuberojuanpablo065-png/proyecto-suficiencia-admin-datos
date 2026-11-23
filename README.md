@@ -3,7 +3,7 @@
 **Pipeline completo de datos y modelo predictivo:** EDA → SQLite → ETL → tabla curada → modelo de clasificación.
 
 Prueba de Suficiencia · Administración de Datos · LEAD University
-Profesor: Alejandro Zamora · Estudiante: Juan Pablo
+Profesor: Alejandro Zamora · Estudiante: Juan Pablo Cubero
 
 ---
 
