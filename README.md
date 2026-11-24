@@ -3,7 +3,7 @@
 **Pipeline completo de datos y modelo predictivo:** EDA → SQLite → ETL → tabla curada → modelo de clasificación.
 
 Prueba de Suficiencia · Administración de Datos · LEAD University
-Profesor: Alejandro Zamora · Estudiante: Juan Pablo Cubero
+Profesor: Alejandro Zamora · Estudiante: Juan Pablo Cubero Torres
 
 ---
 
@@ -75,6 +75,16 @@ Una empresa financiera recibe solicitudes de préstamo de vivienda y tiene que d
 - **Almacenamiento:** la base SQLite.
 - **Consumo:** el notebook 03 y el script leen únicamente desde la base, nunca del CSV.
 
+### Hallazgos del EDA que guiaron el ETL
+
+| Hallazgo (notebook 01) | Decisión que se tomó |
+|---|---|
+| Nulos en 7 columnas: `Credit_History` 50, `Self_Employed` 32, `LoanAmount` 22, `Dependents` 15, `Loan_Amount_Term` 14, `Gender` 13, `Married` 3 | Imputar con estadísticas calculadas solo con train |
+| Las solicitudes con `Credit_History` nulo se aprueban en 74%, distinto de historial 0 (8%) y de historial 1 (80%) | No imputarlas: se marcan como `historial_desconocido` |
+| Ingresos y montos con mucha asimetría y valores extremos | Transformación `log(1 + x)`. Los extremos no se eliminan porque son clientes reales |
+| `Credit_History` es la variable más relacionada con la aprobación (correlación de 0.56) | Se conserva y se refuerza con variables de capacidad de pago |
+| Desbalance 69/31 | Split estratificado, `class_weight="balanced"` y métricas más allá de la accuracy |
+
 ### Pasos del ETL
 
 1. **Extracción:** se lee el CSV y se inserta sin cambios en `prestamos_raw`. Las tablas se crean con `database/schema.sql`, que define tipos, llaves y restricciones. Después los datos se vuelven a consultar desde la base con `pd.read_sql`.
@@ -91,11 +101,18 @@ Una empresa financiera recibe solicitudes de préstamo de vivienda y tiene que d
    - El escalado (`StandardScaler`) va dentro del pipeline del modelo y se ajusta solo con train.
 3. **Carga:** el resultado se guarda en `prestamos_curados`, junto con el diccionario de columnas, la bitácora y las vistas.
 
+### Controles de calidad
+
+- **Sin data leakage:** el split se hace antes de imputar, y el escalado se ajusta solo con train dentro del pipeline del modelo.
+- **La variable objetivo no se usa como predictora:** `metadatos_columnas` marca `aprobado` como objetivo, y el ETL y la verificación comprueban que no esté entre las 16 predictoras. `Loan_ID` tampoco entra al modelo.
+- **Desbalance:** se maneja con split estratificado, `class_weight="balanced"` y selección por costo de errores en lugar de accuracy.
+- **Reproducibilidad:** el ETL se puede correr las veces que se quiera. Recrea las tablas desde `schema.sql`, y la semilla 42 fija el split y los modelos.
+
 ## 5. Tecnologías utilizadas
 
 | Uso | Herramienta |
 |---|---|
-| Lenguaje | Python 3.10 a 3.13 |
+| Lenguaje | Python 3.10 a 3.13 (probado en 3.13; **no** funciona con 3.14, porque las versiones fijadas de numpy y scipy no tienen instalador para esa versión) |
 | Base de datos | SQLite (con `sqlite3` y SQLAlchemy desde Python) |
 | Manipulación de datos | pandas, numpy |
 | Modelos y métricas | scikit-learn |
@@ -129,6 +146,8 @@ proyecto-suficiencia-admin-datos/
 ├── reports/
 │   ├── reporte_final.pdf              documento ejecutivo (3 páginas)
 │   └── figuras/                       gráficos generados por los notebooks
+├── .gitignore                         excluye el entorno virtual y archivos temporales
+├── .gitattributes                     marca .pdf, .db, .joblib y .png como binarios
 ├── README.md
 └── requirements.txt
 ```
@@ -139,12 +158,17 @@ Todos los comandos se corren desde la carpeta raíz del proyecto (`proyecto-sufi
 
 ### 7.1 Instalar (una sola vez)
 
-**Windows (PowerShell o CMD):**
+**Windows (PowerShell):**
 ```
-python -m venv .venv
-.venv\Scripts\activate
+py -3.13 -m venv .venv
+Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
+.venv\Scripts\Activate.ps1
 pip install -r requirements.txt
 ```
+- `Set-ExecutionPolicy` permite activar el entorno **solo en esa ventana**. Sin esa línea, PowerShell bloquea `Activate.ps1`.
+- Si se usa CMD en lugar de PowerShell, se activa con `.venv\Scripts\activate.bat`.
+- Si `py -3.13` no encuentra Python 3.13, se instala con `winget install Python.Python.3.13`.
+- Cada vez que se abre una terminal nueva hay que volver a activar el entorno. El prompt muestra `(.venv)` cuando está activo.
 
 **macOS / Linux:**
 ```
@@ -178,8 +202,13 @@ Si preferís ver el detalle, abrí Jupyter (`jupyter notebook`) y corré los not
 ### 7.3 Reconstruir la base de datos
 
 - **Completa, con datos:** correr `notebooks/02_etl_pipeline.ipynb`. Se puede correr las veces que se quiera: recrea las tablas y agrega una fila nueva a `etl_log`.
-- **Solo la estructura, sin datos:** `sqlite3 database/prestamos.db < database/schema.sql`.
-- **Consultas de revisión:** `sqlite3 database/prestamos.db < database/consultas.sql`. También se pueden abrir con DB Browser for SQLite.
+- **Solo la estructura, sin datos.** Ojo: este comando borra los datos de las tablas.
+  ```
+  python -c "import sqlite3; sqlite3.connect('database/prestamos.db').executescript(open('database/schema.sql', encoding='utf-8').read())"
+  ```
+  Después se corre el notebook 02 para volver a cargar los datos.
+- **Consultas de revisión:** `database/consultas.sql` tiene 8 consultas comentadas: filas cargadas, nulos, balance, split train/test, predictoras, vistas y bitácora. Se pueden ejecutar en [DB Browser for SQLite](https://sqlitebrowser.org/), que es gratuito: *Open Database* → `database/prestamos.db` → pestaña *Execute SQL*. En macOS y Linux también sirve `sqlite3 database/prestamos.db < database/consultas.sql`.
+- **Resultados esperados:** 614 filas en `prestamos_raw`; 491 en train y 123 en test, ambos con ~69% de aprobados; 0 nulos en `prestamos_curados`.
 
 ### 7.4 Reutilizar el modelo desde Python
 
@@ -212,7 +241,7 @@ El script hace 46 chequeos. Revisa que:
 - el modelo cargue y sus métricas sean **exactamente** las que dice este README,
 - el PDF tenga máximo 3 páginas.
 
-Si todo está bien, termina con `RESULTADO: todo correcto`.
+Si todo está bien, termina con `RESULTADO: todo correcto`. Antes de correrlo tiene que existir `database/prestamos.db` con datos, o sea, haberse corrido el notebook 02.
 
 ## 8. Modelos comparados
 
